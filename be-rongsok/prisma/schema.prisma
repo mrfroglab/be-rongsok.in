@@ -62,6 +62,9 @@ generator client {
    ratingsGiven  Rating[]  @relation("RaterRelation")
    ratingsReceived Rating[] @relation("RateeRelation")
    orderCollectors OrderCollector[]
+
+   // Index spasial untuk pencarian pengepul terdekat (ST_DWithin / ST_Distance)
+   @@index([location], type: Gist)
  }
 
  model CollectorProfile {
@@ -180,4 +183,3 @@ generator client {
    detailsJson Json
  }
 
- // Add spatial index (GIST) via @@index on User.location (requires raw migration later)
