@@ -19,7 +19,12 @@ const uploadSingleImage = (buffer, folder = 'rongsokin') => {
     }
 
     const uploadStream = cloudinary.uploader.upload_stream(
-      { folder },
+      {
+        folder,
+        resource_type: 'image',
+        // Cloudinary memeriksa isi file (bukan cuma mimetype dari client)
+        allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif']
+      },
       (error, result) => {
         if (error) {
           return reject(error);

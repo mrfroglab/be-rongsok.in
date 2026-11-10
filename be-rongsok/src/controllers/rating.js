@@ -4,14 +4,34 @@ const { z } = require('zod');
 const ratingSchema = z.object({
   orderId: z.string(),
   rateeId: z.string(),
-  score: z.number().min(1).max(5),
-  reviewText: z.string().optional(),
-  photoUrl: z.string().optional()
+  score: z.number().int().min(1).max(5),
+  reviewText: z.string().max(2000).optional(),
+  photoUrl: z.string().max(2048).optional()
 });
 
 const submitRating = async (req, res, next) => {
   try {
     const data = ratingSchema.parse(req.body);
+
+    // Rating hanya untuk order COMPLETED, oleh salah satu pihak, kepada lawan
+    // transaksinya. Dulu tanpa cek apa pun → siapa saja bisa menjatuhkan /
+    // menggelembungkan avgRating user mana pun.
+    const order = await prisma.order.findUnique({
+      where: { id: data.orderId },
+      select: { customerId: true, collectorId: true, status: true }
+    });
+    if (!order || order.status !== 'COMPLETED' || !order.collectorId) {
+      return res.status(400).json({ status: 'error', message: 'Rating hanya bisa diberikan untuk transaksi yang sudah selesai.' });
+    }
+    const counterpart =
+      order.customerId === req.user.id ? order.collectorId :
+      order.collectorId === req.user.id ? order.customerId : null;
+    if (!counterpart) {
+      return res.status(403).json({ status: 'error', message: 'Anda bukan bagian dari transaksi ini.' });
+    }
+    if (data.rateeId !== counterpart) {
+      return res.status(400).json({ status: 'error', message: 'Penerima rating tidak sesuai dengan transaksi.' });
+    }
 
     // 1. Save rating
     const rating = await prisma.rating.create({

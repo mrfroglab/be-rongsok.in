@@ -30,8 +30,9 @@ services:
       - "127.0.0.1:3000:3000" # Secured: accessible only on the host machine (ideal for Cloudflare Tunnel)
     environment:
       DATABASE_URL: postgresql://${DB_USER:-rongsok_user}:${DB_PASSWORD:-rongsok_password}@db:5432/${DB_NAME:-rongsok_db}?schema=public
-      JWT_SECRET: ${JWT_SECRET:-your-production-jwt-secret-key-change-this}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET wajib diset (min 32 karakter)}
       PORT: 3000
+      KYC_ATTESTATION_SECRET: ${KYC_ATTESTATION_SECRET:-}
       NODE_ENV: production
       CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME}
       CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY}

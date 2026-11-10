@@ -3,9 +3,12 @@ const multer = require('multer');
 // Configure memory storage
 const storage = multer.memoryStorage();
 
+const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);
+
 // File filter for images only
 const fileFilter = (req, file, cb) => {
-  if (file.mimetype.startsWith('image/')) {
+  // Whitelist eksplisit (bukan sekadar image/*) — tolak SVG (bisa berisi script).
+  if (ALLOWED_MIME.has(file.mimetype)) {
     cb(null, true);
   } else {
     cb(new Error('Invalid file type. Only images are allowed!'), false);

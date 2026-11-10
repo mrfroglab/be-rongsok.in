@@ -3,6 +3,13 @@ const { hashPassword, comparePassword, generateToken } = require('../utils/auth'
 const { z } = require('zod');
 const crypto = require('crypto');
 const { sendEmail } = require('../utils/email');
+const { isPlausibleNik, resolveKyc, isKycEnforced } = require('../utils/kyc');
+
+// Foto KTP TIDAK disimpan (privasi) — ktpUrl dari client diabaikan.
+// kycAttestation = token bertanda tangan dari OCR server (lihat utils/kyc.js).
+const nikField = z.string()
+  .regex(/^\d{16}$/, 'NIK harus 16 digit')
+  .refine(isPlausibleNik, 'NIK tidak valid');
 
 const registerSchema = z.object({
   name: z.string().min(2),
@@ -12,10 +19,10 @@ const registerSchema = z.object({
   phone: z.string().optional(),
   avatarUrl: z.string().optional(),
   addressText: z.string().max(500).optional(),
-  // KYC (opsional di schema agar BE backward-compatible; divalidasi di controller)
-  nik: z.string().regex(/^\d{16}$/, 'NIK harus 16 digit').optional(),
-  ktpName: z.string().min(2).optional(),
-  ktpUrl: z.string().optional()
+  // KYC (opsional — akun tetap bisa dibuat walau verifikasi belum berhasil)
+  nik: nikField.optional(),
+  ktpName: z.string().min(2).max(100).optional(),
+  kycAttestation: z.string().max(2048).optional()
 });
 
 const loginSchema = z.object({
@@ -28,12 +35,12 @@ const updateMeSchema = z.object({
   phone: z.string().optional(),
   avatarUrl: z.string().optional(),
   addressText: z.string().max(500).optional(),
-  lat: z.number().optional(),
-  lng: z.number().optional(),
+  lat: z.number().min(-90).max(90).optional(),
+  lng: z.number().min(-180).max(180).optional(),
   // KYC (opsional) — dipakai jalur verifikasi in-app /profile/verify di FE
-  nik: z.string().regex(/^\d{16}$/, 'NIK harus 16 digit').optional(),
-  ktpName: z.string().min(2).optional(),
-  ktpUrl: z.string().optional()
+  nik: nikField.optional(),
+  ktpName: z.string().min(2).max(100).optional(),
+  kycAttestation: z.string().max(2048).optional()
 });
 
 const register = async (req, res, next) => {
@@ -48,12 +55,15 @@ const register = async (req, res, next) => {
     // KYC anti wash-trading: 1 KTP = 1 akun = 1 role.
     // NIK adalah kunci unik utama. Nama dicek sebagai lapis tambahan (case-insensitive,
     // dibatasi ke akun yang sudah punya NIK terdaftar agar tidak false-positive nama umum).
-    if (data.nik) {
-      const dupNik = await prisma.user.findUnique({ where: { nik: data.nik } });
+    const kyc = resolveKyc(data);
+    if (kyc.nik) {
+      const dupNik = await prisma.user.findUnique({ where: { nik: kyc.nik } });
       if (dupNik) {
         return res.status(409).json({ status: 'error', message: 'Identitas sudah terdaftar.' });
       }
-      const refName = (data.ktpName || data.name || '').trim();
+      // Cek nama kembar hanya di mode legacy (NIK tak terbukti). Kalau NIK sudah
+      // dibuktikan via attestation, nama sama ≠ orang sama (banyak "MUHAMMAD RIZKI").
+      const refName = isKycEnforced() ? '' : (kyc.ktpName || data.name || '').trim();
       if (refName) {
         const dupName = await prisma.user.findFirst({
           where: {
@@ -68,9 +78,8 @@ const register = async (req, res, next) => {
     }
 
     const hashedPassword = await hashPassword(data.password);
-    // Terverifikasi begitu NIK terbaca. NIK dibaca AI dari foto KTP asli & dikunci;
-    // foto KTP sengaja tidak disimpan demi privasi, jadi tak lagi syaratkan ktpUrl.
-    const isKyc = Boolean(data.nik);
+    // Terverifikasi hanya bila NIK terbukti dari OCR server (attestation).
+    // Foto KTP sengaja tidak disimpan demi privasi.
     const user = await prisma.user.create({
       data: {
         name: data.name,
@@ -80,10 +89,9 @@ const register = async (req, res, next) => {
         phone: data.phone,
         avatarUrl: data.avatarUrl,
         addressText: data.addressText || null,
-        nik: data.nik || null,
-        ktpName: data.ktpName || null,
-        ktpUrl: data.ktpUrl || null,
-        isVerified: isKyc
+        nik: kyc.nik,
+        ktpName: kyc.ktpName,
+        isVerified: kyc.verified
       }
     });
 
@@ -98,6 +106,10 @@ const register = async (req, res, next) => {
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(422).json({ status: 'error', message: 'Validation failed', errors: error.errors });
+    }
+    if (error && error.code === 'P2002') {
+      // Unique constraint (email / NIK) kena saat request bersamaan
+      return res.status(409).json({ status: 'error', message: 'Identitas atau email sudah terdaftar.' });
     }
     next(error);
   }
@@ -163,13 +175,24 @@ const updateMe = async (req, res, next) => {
     // Cek duplikat identitas (anti wash-trading) sama seperti saat register,
     // tapi kecualikan akun sendiri.
     if (data.nik !== undefined) {
+      const kyc = resolveKyc(data);
+      if (!kyc.verified) {
+        return res.status(422).json({
+          status: 'error',
+          message: 'Verifikasi KTP gagal. Foto ulang KTP dengan jelas lalu coba lagi.'
+        });
+      }
+      const current = await prisma.user.findUnique({ where: { id: userId }, select: { nik: true } });
+      if (current && current.nik && current.nik !== kyc.nik) {
+        return res.status(409).json({ status: 'error', message: 'Akun ini sudah terverifikasi dengan identitas lain.' });
+      }
       const dupNik = await prisma.user.findFirst({
-        where: { nik: data.nik, id: { not: userId } }
+        where: { nik: kyc.nik, id: { not: userId } }
       });
       if (dupNik) {
         return res.status(409).json({ status: 'error', message: 'Identitas sudah terdaftar.' });
       }
-      const refName = (data.ktpName || '').trim();
+      const refName = isKycEnforced() ? '' : (kyc.ktpName || '').trim();
       if (refName) {
         const dupName = await prisma.user.findFirst({
           where: {
@@ -182,11 +205,9 @@ const updateMe = async (req, res, next) => {
           return res.status(409).json({ status: 'error', message: 'Identitas sudah terdaftar.' });
         }
       }
-      updateData.nik = data.nik;
-      if (data.ktpName !== undefined) updateData.ktpName = data.ktpName;
-      if (data.ktpUrl !== undefined) updateData.ktpUrl = data.ktpUrl;
-      // Terverifikasi begitu NIK terbaca (konsisten dgn register; foto KTP tak disimpan)
-      if (data.nik) updateData.isVerified = true;
+      updateData.nik = kyc.nik;
+      updateData.ktpName = kyc.ktpName;
+      updateData.isVerified = true;
     }
 
     if (Object.keys(updateData).length > 0) {
@@ -218,9 +239,15 @@ const updateMe = async (req, res, next) => {
     if (error instanceof z.ZodError) {
       return res.status(422).json({ status: 'error', message: 'Validation failed', errors: error.errors });
     }
+    if (error && error.code === 'P2002') {
+      // Unique constraint (email / NIK) kena saat request bersamaan
+      return res.status(409).json({ status: 'error', message: 'Identitas atau email sudah terdaftar.' });
+    }
     next(error);
   }
 };
+
+const hashResetToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
 
 const forgotPasswordSchema = z.object({
   email: z.string().email(),
@@ -236,17 +263,21 @@ const forgotPassword = async (req, res, next) => {
     const data = forgotPasswordSchema.parse(req.body);
     const user = await prisma.user.findUnique({ where: { email: data.email } });
 
+    // Respons SAMA untuk email terdaftar / tidak — cegah enumerasi akun.
+    const genericResponse = { status: 'success', message: 'Jika email terdaftar, tautan pemulihan kata sandi telah dikirim.' };
     if (!user) {
-      return res.status(404).json({ status: 'error', message: 'Email tidak ditemukan.' });
+      return res.status(200).json(genericResponse);
     }
 
-    const token = crypto.randomBytes(20).toString('hex');
+    // Token mentah hanya dikirim via email; DB menyimpan hash SHA-256-nya,
+    // jadi bocornya DB tidak langsung memberi akses reset password.
+    const token = crypto.randomBytes(32).toString('hex');
     const expires = new Date(Date.now() + 15 * 60 * 1000); // 15 menit
 
     await prisma.user.update({
       where: { id: user.id },
       data: {
-        resetPasswordToken: token,
+        resetPasswordToken: hashResetToken(token),
         resetPasswordExpires: expires,
       },
     });
@@ -268,7 +299,7 @@ const forgotPassword = async (req, res, next) => {
 
     await sendEmail({ to: user.email, subject: 'Atur Ulang Kata Sandi Rongsok.in', html });
 
-    res.status(200).json({ status: 'success', message: 'Tautan pemulihan kata sandi telah dikirim ke email.' });
+    res.status(200).json(genericResponse);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(422).json({ status: 'error', message: 'Validation failed', errors: error.errors });
@@ -283,7 +314,7 @@ const resetPassword = async (req, res, next) => {
 
     const user = await prisma.user.findFirst({
       where: {
-        resetPasswordToken: data.token,
+        resetPasswordToken: hashResetToken(data.token),
         resetPasswordExpires: { gte: new Date() },
       },
     });

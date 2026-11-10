@@ -16,6 +16,14 @@ const adminRoutes = require('./routes/admin');
 const uploadRoutes = require('./routes/upload');
 const { errorHandler } = require('./middlewares/error');
 const prisma = require('./config/prisma');
+const { verifyToken, assertJwtSecret } = require('./utils/auth');
+const { canViewOrder, isOrderParty } = require('./utils/orderAccess');
+
+// Tolak start kalau JWT_SECRET kosong/lemah (dulu fallback ke 'secret').
+assertJwtSecret();
+if (!require('./utils/kyc').isKycEnforced()) {
+  console.warn('⚠️  KYC_ATTESTATION_SECRET belum diset (min 32 karakter) — NIK dari client dipercaya mentah (mode legacy).');
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -36,24 +44,82 @@ app.use(express.json());
 
 // Socket.IO Logic
 app.set('io', io); // Simpan io di instance app agar bisa diakses di controller
+// Autentikasi handshake: FE sudah mengirim { auth: { token } } (lib/socket.ts).
+// Tanpa ini siapa pun bisa join room mana pun & menyadap lokasi live / antrean order.
+io.use(async (socket, next) => {
+  try {
+    const token = socket.handshake.auth && socket.handshake.auth.token;
+    if (!token) return next(new Error('Unauthorized'));
+    const decoded = verifyToken(token);
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      select: { id: true, role: true }
+    });
+    if (!user) return next(new Error('Unauthorized'));
+    socket.data.user = user;
+    next();
+  } catch (err) {
+    next(new Error('Unauthorized'));
+  }
+});
+
+const ROOM_RE = /^(collector|customer|order):([0-9a-fA-F-]{36})$/;
+
 io.on('connection', (socket) => {
-  console.log('User connected:', socket.id);
+  const user = socket.data.user;
 
-  socket.on('join_room', (roomId) => {
-    socket.join(roomId);
-    console.log(`User joined room: ${roomId}`);
-  });
+  // Hanya boleh join room milik sendiri (collector:<id>/customer:<id>) atau room
+  // order yang memang boleh dilihat user ini.
+  socket.on('join_room', async (roomId) => {
+    try {
+      const m = typeof roomId === 'string' ? roomId.match(ROOM_RE) : null;
+      if (!m) return;
+      const [, kind, id] = m;
 
-  // Live tracking: relay posisi pihak yang sedang menuju lokasi ke lawan transaksi.
-  // payload: { orderId, lat, lng, role }. Dikirim ke room order:<orderId> kecuali pengirim.
-  socket.on('location_update', (payload) => {
-    if (payload && payload.orderId) {
-      socket.to(`order:${payload.orderId}`).emit('location_update', payload);
+      if (kind === 'collector') {
+        if (id !== user.id || user.role !== 'COLLECTOR') return;
+      } else if (kind === 'customer') {
+        if (id !== user.id) return;
+      } else {
+        const order = await prisma.order.findUnique({
+          where: { id },
+          select: { id: true, customerId: true, collectorId: true, status: true }
+        });
+        if (!(await canViewOrder(user, order))) return;
+      }
+      socket.join(roomId);
+    } catch (err) {
+      console.error('join_room gagal:', err.message);
     }
   });
 
-  socket.on('disconnect', () => {
-    console.log('User disconnected');
+  // Live tracking: relay posisi pihak yang sedang menuju lokasi ke lawan transaksi.
+  // payload: { orderId, lat, lng, role }. Hanya customer / pengepul yang ditetapkan
+  // pada order tsb yang boleh mengirim; identitas pengirim ditimpa dari server.
+  socket.on('location_update', async (payload) => {
+    try {
+      if (!payload || typeof payload.orderId !== 'string') return;
+      const lat = Number(payload.lat);
+      const lng = Number(payload.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return;
+
+      const order = await prisma.order.findUnique({
+        where: { id: payload.orderId },
+        select: { customerId: true, collectorId: true, status: true }
+      });
+      if (!isOrderParty(user.id, order)) return;
+      if (!['ON_THE_WAY', 'CONFIRMED', 'IN_PROGRESS'].includes(order.status)) return;
+
+      socket.to(`order:${payload.orderId}`).emit('location_update', {
+        orderId: payload.orderId,
+        lat,
+        lng,
+        role: order.collectorId === user.id ? 'COLLECTOR' : 'CUSTOMER',
+        userId: user.id
+      });
+    } catch (err) {
+      console.error('location_update gagal:', err.message);
+    }
   });
 });
 

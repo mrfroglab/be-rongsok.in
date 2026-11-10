@@ -1,5 +1,5 @@
-const jwt = require('jsonwebtoken');
 const prisma = require('../config/prisma');
+const { verifyToken } = require('../utils/auth');
 
 const protect = async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -9,19 +9,20 @@ const protect = async (req, res, next) => {
 
   const token = authHeader.split(' ')[1];
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret');
-    
-    // Verify user still exists in the database
-    const userExists = await prisma.user.findUnique({
+    const decoded = verifyToken(token);
+
+    // Verify user still exists in the database. Role diambil dari DB (bukan dari
+    // JWT) supaya perubahan role langsung berlaku & token lama tanpa role tetap benar.
+    const user = await prisma.user.findUnique({
       where: { id: decoded.id },
-      select: { id: true }
+      select: { id: true, role: true }
     });
-    
-    if (!userExists) {
+
+    if (!user) {
       return res.status(401).json({ status: 'error', message: 'Unauthorized, user no longer exists' });
     }
 
-    req.user = decoded;
+    req.user = { id: user.id, role: user.role };
     next();
   } catch (error) {
     return res.status(401).json({ status: 'error', message: 'Unauthorized, invalid token' });
@@ -34,7 +35,7 @@ const optionalAuth = (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     try {
-      req.user = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET || 'secret');
+      req.user = verifyToken(authHeader.split(' ')[1]);
     } catch (error) {
       // token tidak valid → perlakukan sebagai anonim, jangan blokir
     }
