@@ -27,9 +27,14 @@ if (!require('./utils/kyc').isKycEnforced()) {
 
 const app = express();
 const server = http.createServer(app);
+// CORS_ORIGINS (dipisah koma) membatasi origin yang boleh memanggil API dari
+// browser. Kosong = izinkan semua (perilaku lama, untuk dev lokal).
+const CORS_ORIGINS = (process.env.CORS_ORIGINS || '').split(',').map((o) => o.trim()).filter(Boolean);
+const corsOrigin = CORS_ORIGINS.length ? CORS_ORIGINS : true;
+
 const io = new Server(server, {
   cors: {
-    origin: true,
+    origin: corsOrigin,
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'DELETE']
   }
@@ -37,10 +42,11 @@ const io = new Server(server, {
 
 // Middlewares
 app.use(cors({
-  origin: true,
+  origin: corsOrigin,
   credentials: true
 }));
-app.use(express.json());
+app.disable('x-powered-by');
+app.use(express.json({ limit: '1mb' }));
 
 // Socket.IO Logic
 app.set('io', io); // Simpan io di instance app agar bisa diakses di controller

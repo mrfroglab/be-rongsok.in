@@ -37,6 +37,15 @@ const CATEGORIES = [
 ];
 
 async function main() {
+  // PENGAMAN: seeder ini MENGHAPUS SEMUA DATA. Dulu dipanggil di setiap start
+  // container → tiap redeploy/reboot database produksi terhapus. Sekarang hanya
+  // jalan bila DB masih kosong, atau dipaksa eksplisit dengan SEED_FORCE=true.
+  const existingUsers = await prisma.user.count();
+  if (existingUsers > 0 && process.env.SEED_FORCE !== 'true') {
+    console.log(`DB sudah berisi ${existingUsers} user — seeder dilewati (set SEED_FORCE=true untuk reset total).`);
+    return;
+  }
+
   console.log("Wiping existing database records to perform a clean seed...");
   
   // 1. Wipe data in Foreign Key safe order
@@ -73,7 +82,12 @@ async function main() {
   console.log("Generating password hashes...");
   // 3. Generate password hashes
   const salt = await bcrypt.genSalt(10);
-  const adminHash = await bcrypt.hash('admin123', salt);
+  // Password admin dari env; tanpa env → acak (tidak ada lagi admin123 publik).
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD || require('crypto').randomBytes(18).toString('base64url');
+  if (!process.env.SEED_ADMIN_PASSWORD) {
+    console.log('SEED_ADMIN_PASSWORD tidak diset — admin dibuat dengan password acak (reset lewat lupa password).');
+  }
+  const adminHash = await bcrypt.hash(adminPassword, salt);
   const collectorHash = await bcrypt.hash('collector123', salt);
   const customerHash = await bcrypt.hash('customer123', salt);
 
