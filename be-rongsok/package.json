@@ -8,9 +8,11 @@
     "dev": "node src/server.js",
     "build": "npx prisma generate",
     "prisma": "prisma",
-    "db:migrate": "npx prisma migrate dev --name init",
+    "db:migrate": "npx prisma migrate dev",
+    "db:deploy": "npx prisma migrate deploy",
     "db:generate": "npx prisma generate",
-    "db:seed": "node prisma/seed.js"
+    "db:seed": "node prisma/seed.js",
+    "test": "bash tests/run.sh"
   },
   "dependencies": {
     "@prisma/client": "^5.0.0",
@@ -27,5 +29,8 @@
     "swagger-ui-express": "^5.0.1",
     "yamljs": "^0.3.0",
     "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.4"
   }
 }
