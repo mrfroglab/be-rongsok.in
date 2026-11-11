@@ -9,13 +9,13 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mrfroglab/be-rongsok.in/internal/httpx"
 	"github.com/mrfroglab/be-rongsok.in/internal/store"
 )
 
@@ -255,8 +255,8 @@ func (s *Server) locationUpdate(ctx context.Context, c *Client, raw json.RawMess
 	if json.Unmarshal(raw, &p) != nil || p.OrderID == "" {
 		return
 	}
-	lat, okLat := toNumber(p.Lat)
-	lng, okLng := toNumber(p.Lng)
+	lat, okLat := httpx.Number(p.Lat)
+	lng, okLng := httpx.Number(p.Lng)
 	if !okLat || !okLng || math.Abs(lat) > 90 || math.Abs(lng) > 180 {
 		return
 	}
@@ -277,24 +277,11 @@ func (s *Server) locationUpdate(ctx context.Context, c *Client, raw json.RawMess
 	if order.CollectorID != nil && *order.CollectorID == c.user.ID {
 		role = store.RoleCollector
 	}
-	s.Hub.emit("order:"+p.OrderID, "location_update", map[string]any{
+	// Hanya pihak order saat ini (+ admin) yang menerima posisi live. Anggota room
+	// lain — mis. pengepul yang kalah rebutan order war — tidak ikut menerima.
+	s.Hub.emitIf("order:"+p.OrderID, "location_update", map[string]any{
 		"orderId": p.OrderID, "lat": lat, "lng": lng, "role": role, "userId": c.user.ID,
-	}, c)
-}
-
-// toNumber meniru Number(x) untuk angka & string angka; false bila tidak finite.
-func toNumber(v any) (float64, bool) {
-	var f float64
-	switch x := v.(type) {
-	case float64:
-		f = x
-	case string:
-		var err error
-		if f, err = strconv.ParseFloat(x, 64); err != nil {
-			return 0, false
-		}
-	default:
-		return 0, false
-	}
-	return f, !math.IsNaN(f) && !math.IsInf(f, 0)
+	}, func(m *Client) bool {
+		return m != c && (m.user.Role == store.RoleAdmin || store.IsOrderParty(m.user.ID, order))
+	})
 }

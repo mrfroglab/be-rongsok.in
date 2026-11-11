@@ -115,6 +115,12 @@ func TestWarOrderLifecycle(t *testing.T) {
 			t.Errorf("payload location_update: %s", e.Data)
 		}
 	}
+	if loser.ID == C1.ID {
+		// C1 sempat join room order saat masih kandidat war; setelah kalah tidak boleh menerima lokasi live.
+		if e := sc1.waitFor("location_update", 300*time.Millisecond); e != nil {
+			t.Error("pengepul yang kalah war masih menerima location_update")
+		}
+	}
 	sx.send(t, "location_update", map[string]any{"orderId": orderID, "lat": 1, "lng": 1})
 	if e := sa.waitFor("location_update", 300*time.Millisecond); e != nil {
 		t.Error("attacker bisa mengirim lokasi palsu")

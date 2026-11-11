@@ -202,19 +202,8 @@ func (h *Handler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 
 // toAmount: angka berat/harga dari client — number atau string angka, finite, 0..1e9.
 func toAmount(v any) (float64, bool) {
-	var f float64
-	switch x := v.(type) {
-	case float64:
-		f = x
-	case string:
-		var err error
-		if f, err = strconv.ParseFloat(x, 64); err != nil {
-			return 0, false
-		}
-	default:
-		return 0, false
-	}
-	return f, !math.IsNaN(f) && !math.IsInf(f, 0) && f >= 0 && f <= 1e9
+	f, ok := httpx.Number(v)
+	return f, ok && f >= 0 && f <= 1e9
 }
 
 var errConflict = errors.New("status changed")

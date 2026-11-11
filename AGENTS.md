@@ -9,7 +9,7 @@ Backend Go untuk Rongsok.in. Baca README untuk struktur. Aturan kerja:
   Route didaftarkan di `internal/server/server.go`. SQL hanya di `store` (handler tidak menulis SQL).
 - **Otorisasi**: role selalu dari DB (`middleware.User(r)`), bukan dari JWT. Akses order lewat
   `store.CanViewOrder` / `store.IsOrderParty`. Transisi status order lewat `store.Transition` (atomik).
-- **Kolom `updatedAt` Order wajib diisi manual** (dulu otomatis oleh Prisma) — `store.Transition` sudah melakukannya.
+- **Kolom `updatedAt` Order** diperbarui otomatis oleh trigger DB (migrasi 20261111000000); nilai eksplisit tetap dihormati.
 - **Skema**: tambah file baru di `migrations/`, jangan ubah file lama.
 - **Tes**: setiap perubahan perilaku → tambah/ubah tes di `tests/` (butuh `TEST_DATABASE_URL`).
   Wajib lulus: `gofmt -l .` kosong, `go vet ./...`, `go test -race ./...`.

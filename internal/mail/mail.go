@@ -30,12 +30,16 @@ func (s *Sender) Send(to, subject, html string) error {
 	tlsCfg := &tls.Config{ServerName: s.Host, MinVersion: tls.VersionTLS12}
 	dialer := &net.Dialer{Timeout: 15 * time.Second}
 
+	// Batas waktu seluruh sesi SMTP (bukan hanya dial), agar request tidak menggantung.
+	deadline := time.Now().Add(30 * time.Second)
+
 	var c *smtp.Client
 	if s.Port == "465" {
 		conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsCfg)
 		if err != nil {
 			return err
 		}
+		conn.SetDeadline(deadline) //nolint:errcheck
 		if c, err = smtp.NewClient(conn, s.Host); err != nil {
 			conn.Close()
 			return err
@@ -45,6 +49,7 @@ func (s *Sender) Send(to, subject, html string) error {
 		if err != nil {
 			return err
 		}
+		conn.SetDeadline(deadline) //nolint:errcheck
 		if c, err = smtp.NewClient(conn, s.Host); err != nil {
 			conn.Close()
 			return err
