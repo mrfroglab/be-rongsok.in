@@ -90,7 +90,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	user := s.authenticate(ctx, conn)
+	user, err := s.authenticate(ctx, conn)
+	if err != nil {
+		// Gangguan server (mis. DB) — bukan token salah; pakai 1011 agar klien mencoba lagi.
+		conn.Close(websocket.StatusInternalError, "server error") //nolint:errcheck
+		return
+	}
 	if user == nil {
 		msg, _ := json.Marshal(outgoing{Event: "error", Data: map[string]string{"message": "Unauthorized"}})
 		wctx, wcancel := context.WithTimeout(ctx, 2*time.Second)
@@ -113,29 +118,30 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.readLoop(ctx, c)
 }
 
-func (s *Server) authenticate(ctx context.Context, conn *websocket.Conn) *store.AuthUser {
+// authenticate: (nil, nil) = tidak terautentikasi; error = gangguan server.
+func (s *Server) authenticate(ctx context.Context, conn *websocket.Conn) (*store.AuthUser, error) {
 	actx, cancel := context.WithTimeout(ctx, authTimeout)
 	defer cancel()
 	_, data, err := conn.Read(actx)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	var env Envelope
 	if json.Unmarshal(data, &env) != nil || env.Event != "auth" {
-		return nil
+		return nil, nil
 	}
 	var payload struct {
 		Token string `json:"token"`
 	}
 	if json.Unmarshal(env.Data, &payload) != nil || payload.Token == "" {
-		return nil
+		return nil, nil
 	}
 	user, err := s.Auth.UserFromToken(actx, payload.Token)
 	if err != nil {
 		slog.Error("realtime: auth gagal", "err", err)
-		return nil
+		return nil, err
 	}
-	return user
+	return user, nil
 }
 
 func (c *Client) writeLoop(ctx context.Context) {

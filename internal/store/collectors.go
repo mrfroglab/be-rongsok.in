@@ -178,7 +178,7 @@ func SearchCollectors(ctx context.Context, q db.DBTX, lat, lng, radiusKm float64
 		LEFT JOIN "CollectorCatalog" cc ON cp.id = cc."collectorId"
 		WHERE cp."isOpen" = true `+categoryFilter+`
 		  AND u.location IS NOT NULL
-		  AND ST_DWithin(u.location, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, $3 * 1000)
+		  AND ST_DWithin(u.location, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, $3::float8 * 1000)
 		GROUP BY cp.id, cp."userId", u.id
 		ORDER BY cp."isPremium" DESC, distance ASC`, args...)
 	if err != nil {

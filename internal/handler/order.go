@@ -298,26 +298,38 @@ func (h *Handler) UpdateOrderStatus(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, http.StatusBadRequest, "Lengkapi profil lapak terlebih dahulu")
 			return
 		}
-		active, err := store.CountActiveCollectorOrders(ctx, h.DB, user.ID)
+		// Hitung + ambil dalam satu transaksi dengan lock per pengepul,
+		// agar accept paralel tidak melewati batas pesanan aktif.
+		newStatus = store.StatusOnTheWay
+		var won, overLimit bool
+		err = db.WithTx(ctx, h.DB, func(tx pgx.Tx) error {
+			if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('accept:' || $1))`, user.ID); err != nil {
+				return err
+			}
+			n, err := store.CountActiveCollectorOrders(ctx, tx, user.ID)
+			if err != nil {
+				return err
+			}
+			if n >= profile.MaxConcurrentOrders {
+				overLimit = true
+				return nil
+			}
+			// Diterima langsung jadi "Dalam Perjalanan". collectorId ikut dicocokkan:
+			// war (null) hanya bisa dimenangkan satu pengepul.
+			sets := &store.Sets{}
+			sets.SetStatus(newStatus)
+			sets.Add("collectorId", user.ID)
+			won, err = store.Transition(ctx, tx, id, []string{store.StatusPending}, true, order.CollectorID, sets)
+			return err
+		})
 		if err != nil {
 			httpx.Internal(w, r, err)
 			return
 		}
-		if active >= profile.MaxConcurrentOrders {
+		if overLimit {
 			httpx.Error(w, http.StatusBadRequest, fmt.Sprintf(
 				"Anda telah mencapai batas maksimal pesanan aktif (%d pesanan). Selesaikan pesanan yang ada terlebih dahulu.",
 				profile.MaxConcurrentOrders))
-			return
-		}
-		// Diterima langsung jadi "Dalam Perjalanan". collectorId ikut dicocokkan:
-		// war (null) hanya bisa dimenangkan satu pengepul.
-		newStatus = store.StatusOnTheWay
-		sets := &store.Sets{}
-		sets.SetStatus(newStatus)
-		sets.Add("collectorId", user.ID)
-		won, err := store.Transition(ctx, h.DB, id, []string{store.StatusPending}, true, order.CollectorID, sets)
-		if err != nil {
-			httpx.Internal(w, r, err)
 			return
 		}
 		if !won {
@@ -476,6 +488,7 @@ func (h *Handler) validateWeighing(w http.ResponseWriter, r *http.Request, order
 	}
 	var updates []update
 	var single *update
+	seen := map[string]bool{}
 	if list, ok := in["items"].([]any); ok && len(list) > 0 {
 		for _, raw := range list {
 			item, _ := raw.(map[string]any)
@@ -485,9 +498,10 @@ func (h *Handler) validateWeighing(w http.ResponseWriter, r *http.Request, order
 			itemID, _ := item["id"].(string)
 			weight, okW := toAmount(item["actualWeight"])
 			price, okP := toAmount(item["agreedPrice"])
-			if !slices.Contains(ownIDs, itemID) || !okW || !okP {
+			if !slices.Contains(ownIDs, itemID) || seen[itemID] || !okW || !okP {
 				return invalid()
 			}
+			seen[itemID] = true
 			updates = append(updates, update{itemID, weight, price})
 		}
 	} else {
