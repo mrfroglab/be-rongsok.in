@@ -1,11 +1,9 @@
-node_modules
-**/node_modules
+.git
+.github
 .env
 **/.env
-npm-debug.log
-.git
-.gitignore
 .DS_Store
 .agents
 .planning
+tests
 *.md

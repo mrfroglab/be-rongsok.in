@@ -42,13 +42,17 @@ CHANGES_HANDOFF.md
 fe_agent_prompt.md
 
 # Dokumen planning & desain (simpan di Google Drive / Notion)
-be-rongsok/docs/*.md
-be-rongsok/docs/*.txt
-be-rongsok/docs/*.docx
-be-rongsok/docs/*.docx.bak
-be-rongsok/docs/*.zip
-be-rongsok/docs/activity\ diagram/
-be-rongsok/docs/arsitecture/
-be-rongsok/docs/flow/
-be-rongsok/docs/use\ case/
-be-rongsok/docs/use\ case\ baru/
+docs/*.md
+docs/*.txt
+docs/*.docx
+docs/*.docx.bak
+docs/*.zip
+docs/activity\ diagram/
+docs/arsitecture/
+docs/flow/
+docs/use\ case/
+docs/use\ case\ baru/
+
+# Binary Go
+/rongsokin-api
+/api
