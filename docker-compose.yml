@@ -1,5 +1,4 @@
-version: '3.8'
-
+# Stack lokal (dev): PostGIS + API. Produksi memakai compose di rongsokin-web/deploy/.
 services:
   db:
     image: postgis/postgis:15-3.3
@@ -12,7 +11,7 @@ services:
     volumes:
       - rongsokin-db-data:/var/lib/postgresql/data
     healthcheck:
-      # Double dollar signs $$ escape docker-compose parsing so they pass directly to container shell
+      # $$ = escape supaya diteruskan apa adanya ke shell container
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-rongsok_user} -d $${POSTGRES_DB:-rongsok_db}"]
       interval: 5s
       timeout: 5s
@@ -21,22 +20,19 @@ services:
       - rongsokin-net
 
   app:
-    build:
-      context: .
-      dockerfile: be-rongsok/Dockerfile
+    build: .
     container_name: rongsokin-api
     restart: always
     ports:
-      - "127.0.0.1:3000:3000" # Secured: accessible only on the host machine (ideal for Cloudflare Tunnel)
+      - "127.0.0.1:3000:3000" # hanya dari host (ideal untuk Cloudflare Tunnel)
     environment:
       DATABASE_URL: postgresql://${DB_USER:-rongsok_user}:${DB_PASSWORD:-rongsok_password}@db:5432/${DB_NAME:-rongsok_db}?schema=public
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET wajib diset (min 32 karakter)}
       PORT: 3000
       KYC_ATTESTATION_SECRET: ${KYC_ATTESTATION_SECRET:-}
-      NODE_ENV: production
-      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME}
-      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY}
-      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET}
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:-}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:-}
     depends_on:
       db:
         condition: service_healthy
