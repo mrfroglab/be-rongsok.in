@@ -3,18 +3,12 @@ package handler
 import (
 	"math"
 	"net/http"
-	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/mrfroglab/be-rongsok.in/internal/httpx"
 	"github.com/mrfroglab/be-rongsok.in/internal/store"
 )
-
-func parseFinite(s string) (float64, bool) {
-	f, err := strconv.ParseFloat(s, 64)
-	return f, err == nil && !math.IsNaN(f) && !math.IsInf(f, 0)
-}
 
 // GET /discovery/search?lat=&lng=&categoryId=&radius= — pengepul terdekat (publik).
 func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
@@ -23,15 +17,15 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "lat and lng are required")
 		return
 	}
-	lat, okLat := parseFinite(q.Get("lat"))
-	lng, okLng := parseFinite(q.Get("lng"))
+	lat, okLat := httpx.ParseFinite(q.Get("lat"))
+	lng, okLng := httpx.ParseFinite(q.Get("lng"))
 	if !okLat || !okLng || math.Abs(lat) > 90 || math.Abs(lng) > 180 {
 		httpx.Error(w, http.StatusBadRequest, "lat and lng must be valid coordinates")
 		return
 	}
 	radius := 5.0
 	if s := q.Get("radius"); s != "" {
-		f, ok := parseFinite(s)
+		f, ok := httpx.ParseFinite(s)
 		if !ok || f <= 0 {
 			httpx.Error(w, http.StatusBadRequest, "radius must be a positive number")
 			return

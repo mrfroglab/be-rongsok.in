@@ -222,7 +222,7 @@ func TestMigrateAdoptsLegacyHistory(t *testing.T) {
 			var versions []string
 			rows, _ := p.Query(ctx, `SELECT version FROM schema_migrations ORDER BY version`)
 			versions, _ = pgx.CollectRows(rows, pgx.RowTo[string])
-			if strings.Join(versions, ",") != "20261110000000_baseline,20261110000100_user_location_gist" {
+			if strings.Join(versions, ",") != "20261110000000_baseline,20261110000100_user_location_gist,20261111000000_order_updated_at_trigger" {
 				t.Errorf("versi tercatat: %v", versions)
 			}
 			var idx bool
@@ -251,5 +251,21 @@ func TestHealthAndDocs(t *testing.T) {
 	var v any
 	if json.Unmarshal(r.Raw, &v) != nil {
 		t.Error("404 bukan JSON")
+	}
+}
+
+func TestOrderUpdatedAtTrigger(t *testing.T) {
+	cat := newCategory(t)
+	A := customer(t, -7.8, 110.36)
+	r := call(t, "POST", "/orders", A.Token, map[string]any{"method": "DROPOFF", "lat": -7.8, "lng": 110.36, "items": []any{item(cat, 1)}})
+	expectStatus(t, r, 201, "buat order")
+	id := r.data()["id"].(string)
+	exec(t, `UPDATE "Order" SET "updatedAt" = '2000-01-01' WHERE id = $1`, id)
+	if y := queryVal[float64](t, `SELECT extract(year FROM "updatedAt") FROM "Order" WHERE id = $1`, id); y != 2000 {
+		t.Errorf("nilai updatedAt eksplisit harus dihormati, dapat tahun %v", y)
+	}
+	exec(t, `UPDATE "Order" SET "photoUrl" = 'x' WHERE id = $1`, id)
+	if y := queryVal[float64](t, `SELECT extract(year FROM "updatedAt") FROM "Order" WHERE id = $1`, id); y == 2000 {
+		t.Error("trigger tidak memperbarui updatedAt pada UPDATE tanpa updatedAt")
 	}
 }

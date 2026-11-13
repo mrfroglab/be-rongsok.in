@@ -68,6 +68,11 @@ func (h *Hub) Emit(room, event string, data any) { h.emit(room, event, data, nil
 
 // emit ke anggota room kecuali `except` (setara socket.to(room) di Socket.IO).
 func (h *Hub) emit(room, event string, data any, except *Client) {
+	h.emitIf(room, event, data, func(c *Client) bool { return c != except })
+}
+
+// emitIf ke anggota room yang lolos filter.
+func (h *Hub) emitIf(room, event string, data any, keep func(*Client) bool) {
 	msg, err := json.Marshal(outgoing{Event: event, Data: data})
 	if err != nil {
 		slog.Error("realtime: gagal encode event", "event", event, "err", err)
@@ -76,7 +81,7 @@ func (h *Hub) emit(room, event string, data any, except *Client) {
 	h.mu.RLock()
 	targets := make([]*Client, 0, len(h.rooms[room]))
 	for c := range h.rooms[room] {
-		if c != except {
+		if keep(c) {
 			targets = append(targets, c)
 		}
 	}

@@ -84,7 +84,9 @@ func main() {
 
 func serve(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool) error {
 	if err := db.Migrate(ctx, pool, migrations.FS); err != nil {
-		return fmt.Errorf("migrasi gagal: %w", err)
+		// Sama dengan perilaku lama: tetap jalan dengan skema yang ada daripada
+		// container restart terus (API mati total). Wajib dicek di log.
+		slog.Error("MIGRASI GAGAL — server tetap jalan dengan skema lama", "err", err)
 	}
 	if err := seed.IfEmpty(ctx, pool, cfg.SeedAdminPassword); err != nil {
 		slog.Error("seeding gagal / dilewati", "err", err)
